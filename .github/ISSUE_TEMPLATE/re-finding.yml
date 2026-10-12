@@ -1,0 +1,53 @@
+name: Reverse-engineering finding
+description: Report something learned about the client, protocol, or assets
+title: "[RE] <short summary>"
+labels: ["reverse-engineering"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Don't paste game binaries, extracted/decrypted assets, or encryption keys. Reference assets by
+        their path inside the pak and code by build + address / function name.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Engine / paks
+        - Network (hosts, transport, framing, crypto)
+        - Opcodes / packet structs
+        - Story mode
+        - PvE authority (client vs server logic)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: Build
+      multiple: true
+      options:
+        - Dec 2019 story (8731260772729569992)
+        - Jan 2020 post-patch (2917805514726316864)
+        - Final / live
+    validations:
+      required: true
+  - type: textarea
+    id: finding
+    attributes:
+      label: Finding
+      description: What you found. Mark anything guessed with `?`.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Capture folder + packet index, exe address / Ghidra function name, or asset path
+    validations:
+      required: true
+  - type: textarea
+    id: failed
+    attributes:
+      label: Approaches that didn't work
+      description: Optional, so nobody retries them

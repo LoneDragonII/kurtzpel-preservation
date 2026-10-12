@@ -1,0 +1,88 @@
+# --- Game builds (never commit KOG files) ---
+KurtzPel_*/
+**/KurtzPel_*/
+TheChase/
+work/
+manifests/
+
+# --- Captures (shared via issues/links, never committed) ---
+captures/
+*.pcap
+*.pcapng
+*.pcap.gz
+*.cap
+*.etl
+*.har
+
+# --- Game binaries and containers ---
+*.pak
+*.sig
+*.utoc
+*.ucas
+*.exe
+*.dll
+*.pdb
+*.sys
+
+# --- Extracted / decrypted assets ---
+extracted/
+export/
+exports/
+Output/
+*.uasset
+*.uexp
+*.ubulk
+*.umap
+*.ushaderbytecode
+*.bnk
+*.wem
+*.bik
+*.bk2
+
+# --- Encryption keys ---
+*aes*key*
+*AES*KEY*
+*.key
+keys/
+keys.json
+crypto.json
+
+# --- Credentials, tokens, session data ---
+.env
+.env.*
+*.token
+*token*.txt
+*session*.json
+*cookies*
+secrets/
+*.secret
+config.local.*
+# DepotDownloader saved logins / caches
+account.config
+.DepotDownloader/
+depots/
+
+# --- Media (link videos instead) ---
+*.mp4
+*.mkv
+*.mov
+*.zip
+*.7z
+*.rar
+
+# --- Python / tooling ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+*.sqlite
+*.db
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

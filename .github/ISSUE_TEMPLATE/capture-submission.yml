@@ -1,0 +1,67 @@
+name: Capture submission
+description: Share a live-traffic capture from the official servers
+title: "[Capture] <activity>"
+labels: ["capture"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for capturing! Please read [docs/capturing.md](https://github.com/LoneDragonII/kurtzpel-preservation/blob/main/docs/capturing.md) first.
+        **Do not attach captures directly here.** Upload the zip somewhere you control and paste the link.
+  - type: input
+    id: activity
+    attributes:
+      label: Activity
+      description: What you did, e.g. "login cold start", "PvE boss X solo", "lobby inventory equip"
+    validations:
+      required: true
+  - type: input
+    id: date
+    attributes:
+      label: Capture date
+      placeholder: YYYY-MM-DD
+    validations:
+      required: true
+  - type: input
+    id: link
+    attributes:
+      label: Download link
+      description: Link to the zipped capture folder (raw.pcapng, README.md, optional decrypted.jsonl / video)
+    validations:
+      required: true
+  - type: dropdown
+    id: contents
+    attributes:
+      label: What's included
+      multiple: true
+      options:
+        - Wireshark pcap/pcapng
+        - Frida JSONL (decrypted)
+        - Video
+        - README with timestamped actions
+  - type: input
+    id: region
+    attributes:
+      label: Region / server
+  - type: dropdown
+    id: party
+    attributes:
+      label: Party
+      options:
+        - Solo
+        - Party (2+ players)
+        - PvP
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I captured only my own client's traffic on my own account.
+          required: true
+        - label: I removed or redacted my account name, Steam ID, tokens/session data, and other players' names (or I've flagged below what still needs redacting).
+          required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything unusual, things you're unsure about, or data that still needs redacting

@@ -1,0 +1,44 @@
+name: Bug report
+description: Something in our tools or server emulator doesn't work
+title: "[Bug] <short summary>"
+labels: ["bug"]
+body:
+  - type: input
+    id: component
+    attributes:
+      label: Component
+      description: e.g. server login, lobby, a script in tools/
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: Client build
+      options:
+        - Dec 2019 story (8731260772729569992)
+        - Jan 2020 post-patch (2917805514726316864)
+        - Final / live
+        - Not applicable
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: Strip account names, Steam IDs and tokens first
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python version, commit
