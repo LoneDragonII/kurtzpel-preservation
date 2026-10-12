@@ -35,11 +35,11 @@ what to record, how to name it, how to strip personal data, and how to submit it
 | Archiving builds | Dec 2019 story build archived; Jan 2020 post-patch build in progress; final build pending |
 | Engine | Identified: KOG fork of **Unreal Engine 4.19.1** (internal project name *TheChase*) |
 | Pak files | Pak format v4, encrypted index; listing works for the Dec 2019 build |
-| Networking | Bootstrap goes over HTTPS to an "app info" service under `appinfo.playkog.com`, which hands the client a game-server address. Lobby/game traffic is a custom KOG protocol; the client contains **355 packet names** (`CL_GS_*`, `GS_CL_*`, …). Opcode IDs and wire encryption not yet mapped |
+| Networking | Bootstrap is an HTTP(S) "app info" service (GetOption, Login) that hands the client a game-server address. Lobby traffic is a custom KOG TCP protocol: framing, cipher and the 2019 opcode table (370 ids) are mapped, see [notes/emulator-2019.md](notes/emulator-2019.md) |
 | In-match | Missions appear to run on UE dedicated servers behind a relay. Whether boss logic is client- or server-authoritative is still open |
 | Story mode | The 2019 client contains `Epic_<id>` story missions across six areas, with cinematics and NPC dialogue tables. Diff against the Jan 2020 build pending |
 | Live captures | **Not started — this is where we need help most** |
-| Server emulator | Not started |
+| Server emulator | **Working prototype for the 2019 story client**: login → character creation → tutorial → walking around Eltheca, with no official servers. See [server/](server/README.md) |
 
 ## Roadmap
 
@@ -72,7 +72,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR or issue.
 ```
 docs/            how to get builds, how to capture traffic
 notes/           findings, one markdown file per topic (engine, network, opcodes, story, PvE)
-tools/           our scripts: Frida hooks, parsers, diff tools
+tools/           our scripts: Frida hooks, parsers, diff tools (tools/re: 2019 packet-layout extractors)
 server/          the emulator
 ```
 
