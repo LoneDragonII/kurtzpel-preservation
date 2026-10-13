@@ -1,9 +1,10 @@
 # Emulator for the Dec 2019 story client
 
-**Status 2026-10-13:** a real 2019 client logs in, creates and selects a character, plays into the new-character
-tutorial, and walks around Eltheca (square loaded locally via `tools/frida/square_local.js`). Multiplayer square
-(listen host) joins but the joiner can't move yet. Helper scripts referenced below as `tools/run_offline.py`,
-`offline_guard.js`, `nosteam.js`, `boot_map.js` are local and not published yet.
+**Status 2026-10-13 (day 2):** a real 2019 client logs in, creates and selects a character, walks around Eltheca,
+requests a story (Epic) mission from the Mission Map, gets matched, loads the mission map locally with its own
+character and plays it to the boss kill (combat, boss AI, cutscenes). No result screen yet. Helper scripts referenced
+below as `tools/run_offline.py`, `offline_guard.js`, `nosteam.js`, `boot_map.js` are local and not published yet;
+`tools/frida/local_travel.js` is.
 
 Code: `server/` (package `kzemu`, AGPL, no keys/assets).
 Static evidence below is from `KurtzPel_2019-12-27_story/TheChase/Binaries/Win64/TheChase-Win64-Shipping.exe`
@@ -90,6 +91,27 @@ Static evidence below is from `KurtzPel_2019-12-27_story/TheChase/Binaries/Win64
   relay (RS_DS_* / UPDATE_CHARACTER_INFO_IN_GAME_ONLY_NOT, UPDATE_ALLOWED_CHARACTER_LIST_REQ). Next: feed the host the
   joiner's character (host connects to kzemu as a DS/relay client, or a Frida injection), or have the host log in too.
 - Equip in the inventory menu hangs: CL_GS_EQUIP_ITEM_REQ (0x001d: u32, u64 item uid, u8 slot, u8) has no ACK yet.
-- 2026-10-13 22:55Z: **walking in Eltheca** with `tools/frida/square_local.js` (OpenLevel with an IP as the level name →
-  open `Square_Eltheca` locally). Character, weapon and NPC markers render; body still a placeholder mesh. HUD warns
-  "equipment inventory is full (220,040 / 0)": the inventory capacity is 0, probably one of the 10 placeholder stats.
+- 2026-10-13 22:55Z: **walking in Eltheca** with `tools/frida/square_local.js`. Inventory capacity shows 0 ("equipment inventory is full (220,040 / 0)"), probably a
+  placeholder stat. 
+- 2026-10-13 06:30Z: mission map. Needs GS_CL_DISPLAY_MISSION_LIST_NOT (0x58: u32, TMap<u32 mission id, u32>,
+  TSet<u32>); 22 Epic ids = map suffixes (1000-1030 Abandoned Ruins ... 6000-6020 Karciel). Mission board asks
+  CL_GS_GET_CUSTOM_MISSION_LIST_REQ (0x68) and spins until ACK 0x69 (i32, TArray, FString, i32, TMap<u8,u32>).
+- Inventory TMap 0x2e4110 = TMap<u8 EInventoryType, {u32 used, u32 capacity}> (proved by the HUD warning
+  "skill inventory is full (210,040 / 0)" when it held (1, 210040, 0)). Karmas (210040/220040) are skill inventory.
+- Request Mission button sends nothing yet (client-side gate, unknown). Workaround: `--start-mission <id>` makes the
+  next square travel open the Epic map locally via `local_travel.js` + `--travel-file`.
+- Epic_1000 loads locally with the player's character; boss AI moves and attacks (client is the authority). Stats
+  0x34a200 are 10 float32 (setter 0x485b2a → 0x47fa40 / 0x43bfc0); sent as ints they gave zero move speed/stamina/HP.
+- 2026-10-13 07:18Z: **Epic 1000 fully playable** (hits both ways, dodges, karma switch, boss AI, intro). StatInfo
+  = UnitStatTable UnitStatData: {Strength, Agility, Inteligence, Spirit, Stamina}, Mass, GravityScale, MaxJumpHeight,
+  MaxWalkSpeed, GroundFriction (float32); row 0 = 5,5,5,5,5,100,4,300,740,0.02.
+- Mission end: the local host sends DS_RS_END_GAME_NOT (0xdc: u8 result, u64 char uid, ...) on the GS socket.
+  GS_CL_END_GAME_NOT (0x1c) handler TCStateRoom 0x37f7b0 needs the local player (u64 at controller+0x318) in the
+  per-player TMap at struct+0x90, else no result screen (character stood still after the boss).
+- 2026-10-13 07:55Z: **Request Mission works end to end.** RequestMatch (0x312280) sends one CL_GS_REQUEST_MATCH_REQ
+  (u32 mission id, FString region) per ping-test region; regions come from GS_CL_PING_TEST_ADDRESS_LIST_NOT (0x50:
+  TMap<FString, TArray<FString>>), so with none the button does nothing. Flow: REQUEST_MATCH_ACK (i32, u32, FString,
+  u32) → UPDATE_REQUESTED_MATCH_NOT (u32, u64, u32, FString, TMap) → COMPLETED_MATCH_NOT (0x29: u32, FString, u32,
+  u64, u32) → client ANSWER_TO_COMPLETED_MATCH_NOT → PROGRESS_INFO_OF_COMPLETED_MATCH_NOT (0x2a) + JOINABLE_ROOM_NOT
+  → local_travel.js opens the Epic map. Caverns_of_Beast_Epic_3000 played to the boss kill.
+- Result screen still missing: END_GAME handler needs GameInstance+0x2730 (reward widget class), null so far.

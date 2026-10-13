@@ -13,6 +13,8 @@ import sys, functools, pefile, capstone
 from capstone import x86
 
 READ_RAW, READ_FSTRING = 0x3e1610, 0x3c3940
+WRITE_RAW, WRITE_FSTRING = 0x3f3ae0, 0x3e1580
+INIT, DONE = 0x3bb800, 0x3c19d0
 exe = sys.argv[1]
 pe = pefile.PE(exe, fast_load=True)
 md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64); md.detail = True
@@ -55,10 +57,10 @@ def analyze(rva, depth):
 SKIP = {0xe4eb20, 0x297e536, 0x297e53c, 0xdff0c0, 0xdfecd0, 0x556df0, 0x59a080, 0x297c470}
 
 
-def _analyze(rva, depth):
+def _analyze(rva, depth, end=None):
     """Return list of items: ('raw', off, n) | ('str', off) | ('call', off, target, sub) | ('loop', start, end)."""
     items, r8, rdx_off = [], None, None
-    body = insns(rva)
+    body = insns(rva) if end is None else list(md.disasm(pe.get_data(rva, end - rva), rva))
     for ins in body:
         m, ops = ins.mnemonic, ins.operands
         if m == 'mov' and len(ops) == 2 and ops[0].type == x86.X86_OP_REG and ins.reg_name(ops[0].reg) in ('r8d', 'r8') and ops[1].type == x86.X86_OP_IMM:
@@ -67,9 +69,9 @@ def _analyze(rva, depth):
             rdx_off = ops[1].mem.disp
         if m == 'call' and ops[0].type == x86.X86_OP_IMM:
             t = ops[0].imm
-            if t == READ_RAW:
+            if t in (READ_RAW, WRITE_RAW):
                 items.append(('raw', ins.address, rdx_off, r8))
-            elif t == READ_FSTRING:
+            elif t in (READ_FSTRING, WRITE_FSTRING):
                 items.append(('str', ins.address, rdx_off))
             elif depth > 0 and t not in SKIP:
                 sub = analyze(t, depth - 1)
@@ -101,5 +103,24 @@ def show(items, ind=0):
             show(it[4], ind + 1)
 
 
+def window(site):
+    """Schema of the inline (de)serialization between Init and Done around a code address (handler or send template)."""
+    ins = list(md.disasm(pe.get_data(site - 0x600, 0xc00), site - 0x600))
+    calls = [(i.address, i.operands[0].imm) for i in ins if i.mnemonic == 'call' and i.operands and i.operands[0].type == x86.X86_OP_IMM]
+    best = None
+    for k, (a, t) in enumerate(calls):
+        if t == INIT:
+            d = next((b for b, u in calls[k + 1:] if u == DONE), None)
+            if d and (best is None or abs(a - site) < abs(best[0] - site)):
+                best = (a + 5, d)
+    if not best:
+        print('no Init..Done window near', hex(site)); return
+    print(f'window {best[0]:#x}..{best[1]:#x}')
+    show(_analyze(best[0], 6, best[1]))
+
+
 if __name__ == '__main__':
-    show(analyze(int(sys.argv[2], 16), int(sys.argv[3]) if len(sys.argv) > 3 else 6))
+    if sys.argv[2] == '--window':
+        window(int(sys.argv[3], 16))
+    else:
+        show(analyze(int(sys.argv[2], 16), int(sys.argv[3]) if len(sys.argv) > 3 else 6))

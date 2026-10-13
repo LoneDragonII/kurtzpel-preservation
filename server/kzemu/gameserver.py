@@ -81,6 +81,8 @@ class Session:
         self.steam_id = sid
         self.account_uid = self.srv.db.account(sid)
         log.info('%s  account %d', self.peer, self.account_uid)
+        self.send(P.GS_CL_PING_TEST_ADDRESS_LIST_NOT,
+                  P.ping_test_address_list_not({'local': [self.srv.square['host']]}))
         self.send(P.GS_CL_VERIFY_ACCOUNT_ACK, P.verify_account_ack(self.account_uid, sid))
 
     def chars(self):
@@ -113,14 +115,21 @@ class Session:
             return
         self.char = self.srv.db_char(ch)
         self.send(P.GS_CL_USE_CHARACTER_ACK, P.use_character_ack(self.account_uid, self.char))
+        # after the ACK: before it the client has no current character ("SetUnitChaserRankInfo CharacterUID : 0")
+        self.send(P.GS_CL_UPDATE_CHASER_RANK_INFO_NOT, P.chaser_rank_info_not(self.char['name']))
 
     def on_disuse_character(self, p):
         self.char = None
         self.send(P.GS_CL_DISUSE_CHARACTER_ACK, P.result_only())
 
     def on_enter_square(self, p):
+        # back to the square, unless --start-mission asked to go straight into a story mission
+        mid, self.srv.start_mission = self.srv.start_mission, None  # only once
+        self.srv.current_mission = mid
+        self.srv.set_travel(P.mission_map(mid) if mid else '')
         sq = self.srv.square
         self.send(P.GS_CL_ENTER_SQUARE_ACK, P.enter_square_ack(sq['id']))
+        self.send(P.GS_CL_DISPLAY_MISSION_LIST_NOT, P.display_mission_list_not(sorted(P.EPIC_MISSIONS)))
         self.send(P.GS_CL_JOINABLE_SQUARE_NOT,
                   P.joinable_square_not(sq['id'], secrets.randbits(63), sq['host'], sq['port']))
 
@@ -129,6 +138,45 @@ class Session:
 
     def on_exit_room(self, p):
         self.send(P.GS_CL_EXIT_ROOM_ACK, P.result_only())
+
+    def on_custom_mission_list(self, p):
+        self.send(P.GS_CL_GET_CUSTOM_MISSION_LIST_ACK, P.custom_mission_list_ack())
+
+    def on_complete_guide(self, p):
+        self.guides = getattr(self, 'guides', set()) | {p[0]} if p else getattr(self, 'guides', set())
+        self.send(P.GS_CL_COMPLETE_GUIDE_ACK, P.complete_guide_ack(sorted(self.guides)))
+
+    def on_request_match(self, p):
+        # CL_GS_REQUEST_MATCH_REQ (sender 0x312280, one per selected mission): u32 mission id?, FString.
+        rd = Reader(p)
+        mid = rd.u32() if rd.left() >= 4 else 0
+        log.info('%s  mission request %s: payload %s', self.peer, mid, p.hex())
+        self.srv.current_mission = mid if P.mission_map(mid) else 1000
+        self.send(P.GS_CL_REQUEST_MATCH_ACK, P.request_match_ack(value=mid))
+        self.send(P.GS_CL_UPDATE_REQUESTED_MATCH_NOT, P.update_requested_match_not(mid))
+        # solo: the match is "found" at once; the client answers with ANSWER_TO_COMPLETED_MATCH_NOT
+        region = rd.fstr() if rd.left() >= 4 else 'local'
+        self.send(P.GS_CL_COMPLETED_MATCH_NOT, P.completed_match_not(mid, region))
+
+    def on_answer_completed_match(self, p):
+        log.info('%s  answer to completed match: %s', self.peer, p.hex())
+        self.srv.set_travel(P.mission_map(self.srv.current_mission or 1000))
+        ch = self.char or {'uid': 0}
+        self.send(P.GS_CL_PROGRESS_INFO_OF_COMPLETED_MATCH_NOT,
+                  P.progress_info_of_completed_match_not(self.srv.current_mission or 0, ch['uid']))
+        sq = self.srv.square
+        self.send(P.GS_CL_JOINABLE_ROOM_NOT, P.joinable_room_not(1, secrets.randbits(63), sq['host'], sq['port']))
+
+    def on_cancel_match(self, p):
+        self.send(P.GS_CL_CANCEL_MATCH_ACK, P.result_only())
+
+    def on_ds_end_game(self, p):
+        # The client is its own mission host and reports the end like a DS would (u8 first: 1 = cleared?).
+        won = bool(p and p[0] == 1)
+        log.info('%s  mission ended (won=%s): %s', self.peer, won, p[:32].hex())
+        ch = self.char or {'uid': 0, 'name': ''}
+        self.send(P.GS_CL_END_GAME_NOT, P.end_game_not(self.srv.current_mission or 0, won, ch['uid'], ch['name'], self.account_uid or 0))
+        self.send(P.GS_CL_GAME_REWARD_NOT, P.game_reward_not())
 
     def ignore(self, p):
         pass
@@ -148,14 +196,34 @@ HANDLERS = {
     P.CL_GS_CHANGE_GAME_STATE_NOT: Session.ignore,
     P.CL_GS_UPDATE_PING_BY_REGION_NOT: Session.ignore,
     P.CL_GS_QUIT_CLIENT_NOT: Session.ignore,
+    P.DS_RS_END_GAME_NOT: Session.on_ds_end_game,
+    P.DS_RS_UPDATE_GAME_PLAY_LOG_NOT: Session.ignore,
+    P.GAME_MODE_USER_JOIN_PROGRESS_INFO_NOT: Session.ignore,
+    P.JOINED_GAME_MODE_USER_NOT: Session.ignore,
+    P.CL_GS_REQUEST_MATCH_REQ: Session.on_request_match,
+    P.CL_GS_ANSWER_TO_COMPLETED_MATCH_NOT: Session.on_answer_completed_match,
+    P.CL_GS_CANCEL_MATCH_REQ: Session.on_cancel_match,
+    P.CL_GS_SQUARE_FPS_LOG_NOT: Session.ignore,
+    P.CL_GS_GET_CUSTOM_MISSION_LIST_REQ: Session.on_custom_mission_list,
+    P.CL_GS_COMPLETE_GUIDE_REQ: Session.on_complete_guide,
 }
 
 
 class GameServer:
-    def __init__(self, db, key, square, names=None, trace_path=None):
+    def __init__(self, db, key, square, names=None, trace_path=None, travel_file=None):
         self.db, self.key, self.square = db, key, square
+        self.travel_file = travel_file
+        self.start_mission = None
+        self.current_mission = None
         self.names = {int(k, 16): v for k, v in (names or {}).items()}
         self.trace_f = open(trace_path, 'a', encoding='utf-8') if trace_path else None
+
+    def set_travel(self, path):
+        """Tell tools/frida/local_travel.js which map to open locally on the next server travel."""
+        if self.travel_file:
+            with open(self.travel_file, 'w', encoding='utf-8') as f:
+                f.write(path or '')
+            log.info('local travel -> %s', path)
 
     @staticmethod
     def db_char(row):

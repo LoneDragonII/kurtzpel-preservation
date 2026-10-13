@@ -9,3 +9,4 @@ your local game builds and captures as arguments; they never ship game data.
 | `re/handlers2019.py` | Maps each s2c packet name to its deserializer |
 | `re/sends2019.py` | Maps c2s opcodes to their serializers |
 | `frida/square_local.js` | 2019 client: open the Eltheca square locally instead of connecting to a square server |
+| `frida/local_travel.js` | 2019 client: open the map named in kzemu's travel file (missions) or the square locally |

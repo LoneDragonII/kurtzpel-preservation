@@ -4,10 +4,9 @@ Private-server emulator for KurtzPel. Current target: the **Dec 2019 story clien
 Python 3.11+, SQLite. Contains no KOG code, keys or assets: the packet key is read at startup from the player's own
 client exe.
 
-Status (2026-10-13): login → character creation → character select → Eltheca square works with a real client.
-The new-character tutorial loads and the character spawns with the starter weapon. The square can be loaded locally
-(single player, `tools/frida/square_local.js`, you can walk around) or hosted by a second copy of the client running
-the map as a listen server (joins, but the joiner can't move yet).
+Status (2026-10-13): with a real 2019 client you can log in, create and select a character, walk around Eltheca,
+open the Mission Map, request a story (Epic) mission, get matched and play it to the boss kill. Missions and the square
+run inside your own client (it is its own host), loaded by `tools/frida/local_travel.js`.
 
 ## Run
 
@@ -17,6 +16,10 @@ python -m kzemu --client-exe "<KurtzPel>/TheChase/Binaries/Win64/TheChase-Win64-
 ```
 Serves app info on `127.0.0.1:18080` and the game server on `127.0.0.1:11001`, and sends clients to a square at
 `127.0.0.1:7777` (`--square host:port`). State goes to `kzemu.sqlite`; every decoded packet to `logs/trace.jsonl`.
+
+With `--travel-file <path>` the server writes the map the client should open next; `tools/frida/local_travel.js`
+(set its `TRAVEL_FILE` to the same path) opens it locally instead of connecting to a match server.
+`--start-mission <id>` skips the Mission Map and opens that Epic straight after login (ids 1000-6020).
 
 Client switches (the 2019 client reads these from its command line):
 ```
@@ -38,9 +41,8 @@ To join a square hosted by another client, both copies must run with Steam netwo
 | `tests/test_loopback.py` | fake client walks the whole flow with a random key |
 
 ## Known gaps
+- No result screen after the boss (END_GAME is accepted; the client's reward widget class is never loaded).
 - Equipping items (`CL_GS_EQUIP_ITEM_REQ`) has no handler yet, so the client waits forever.
-- Starter skills are not equipped. The 10 stat values are placeholders.
-- The world model may still use a placeholder body (the "worn look" set encoding is a guess).
-- Multiplayer square: the listen host has no character data for joiners, so they can't move.
-- Inventory capacity shows 0 ("equipment inventory is full"), probably from the placeholder stats.
-- No story/mission flow yet.
+- Starter skills are not equipped; mission rewards (AP/CP/items) and story progress are not saved.
+- The body renders as a placeholder mesh in the world (only the head shows); fine in the inventory menu.
+- Multiplayer square/missions: a listen host has no character data for joiners, so they can't move.

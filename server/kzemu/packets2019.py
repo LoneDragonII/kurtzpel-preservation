@@ -6,7 +6,7 @@ Deserialize functions; the RVA of each is given so the layout can be re-checked 
 Only what is needed to get from the login screen to the square (lobby) is filled in; every container is sent
 empty and every optional absent unless noted.
 """
-import time
+import struct, time
 from .wire import Writer
 
 HEART_BEAT = 0x0000
@@ -17,6 +17,20 @@ CL_GS_CHARACTER_LIST_REQ, GS_CL_CHARACTER_LIST_ACK = 0x000b, 0x000c
 CL_GS_USE_CHARACTER_REQ, GS_CL_USE_CHARACTER_ACK = 0x000d, 0x000e
 CL_GS_ENTER_SQUARE_REQ, GS_CL_ENTER_SQUARE_ACK = 0x000f, 0x0010
 GS_CL_JOINABLE_SQUARE_NOT = 0x0011
+GS_CL_DISPLAY_MISSION_LIST_NOT = 0x0058
+GS_CL_UPDATE_CHASER_RANK_INFO_NOT = 0x002b
+GS_CL_PING_TEST_ADDRESS_LIST_NOT = 0x0050
+GS_CL_END_GAME_NOT, GS_CL_GAME_REWARD_NOT = 0x001c, 0x001f
+# The 2019 client hosting a mission locally still talks to its "relay" (RS) through the GS connection:
+GAME_MODE_USER_JOIN_PROGRESS_INFO_NOT, JOINED_GAME_MODE_USER_NOT = 0x016c, 0x016d
+DS_RS_END_GAME_NOT, DS_RS_UPDATE_GAME_PLAY_LOG_NOT = 0x00dc, 0x00de
+CL_GS_REQUEST_MATCH_REQ, GS_CL_REQUEST_MATCH_ACK = 0x0021, 0x0022
+CL_GS_CREATE_ROOM_REQ, GS_CL_CREATE_ROOM_ACK = 0x0014, 0x0015
+GS_CL_JOINABLE_ROOM_NOT = 0x0018
+GS_CL_UPDATE_REQUESTED_MATCH_NOT, GS_CL_COMPLETED_MATCH_NOT = 0x0028, 0x0029
+GS_CL_PROGRESS_INFO_OF_COMPLETED_MATCH_NOT = 0x002a
+CL_GS_ANSWER_TO_COMPLETED_MATCH_NOT = 0x0049
+CL_GS_CANCEL_MATCH_REQ, GS_CL_CANCEL_MATCH_ACK = 0x0023, 0x0024
 CL_GS_EXIT_ROOM_REQ, GS_CL_EXIT_ROOM_ACK = 0x0019, 0x001a
 CL_GS_DISUSE_CHARACTER_REQ, GS_CL_DISUSE_CHARACTER_ACK = 0x0044, 0x0045
 CL_GS_CHANGE_GAME_STATE_NOT = 0x0059
@@ -25,6 +39,10 @@ CL_GS_UPDATE_PING_BY_REGION_NOT = 0x0070
 CL_GS_QUIT_CLIENT_NOT = 0x0080
 CL_GS_INITIAL_FLOW_STEP_NOT = 0x0086
 CL_GS_ENTER_TRAINING_ROOM_REQ, GS_CL_ENTER_TRAINING_ROOM_ACK = 0x0092, 0x0093
+CL_GS_GET_CUSTOM_MISSION_LIST_REQ, GS_CL_GET_CUSTOM_MISSION_LIST_ACK = 0x0068, 0x0069
+CL_GS_SQUARE_FPS_LOG_NOT = 0x0085
+CL_GS_COMPLETE_GUIDE_REQ, GS_CL_COMPLETE_GUIDE_ACK = 0x0089, 0x008a
+CL_GS_EQUIP_ITEM_REQ, GS_CL_EQUIP_ITEM_ACK = 0x001d, 0x001e
 
 OK = 0
 
@@ -41,9 +59,11 @@ def verify_account_ack(account_uid: int, steam_id: str) -> bytes:
     w.empty(3)          # TMap<u32,u32> 0x2e0b90, TMap 0x351810, TSet<u32> 0x2e2090
     w.u64(0)
     w.empty(2)          # TSet<u8> 0x2e4510, TSet<u32> 0x2e2090
-    w.u32(0).u8(0).u32(0)
+    # Unknown counters. One of the account/character u32s is an inventory capacity: with all zero the client says
+    # "you cannot accept new mission as your skill/equipment inventory is full". Trying 100 everywhere.
+    w.u32(100).u8(1).u32(100)
     w.empty(1)          # TMap 0x2e18e0
-    w.u32(0)
+    w.u32(100)
     w.empty(1)          # TMap 0x3519e0
     return w.bytes()
 
@@ -52,15 +72,19 @@ def verify_account_ack(account_uid: int, steam_id: str) -> bytes:
 SLOT_NONE, SLOT_WEAPON, SLOT_WEAPON_SUB, SLOT_TOP, SLOT_PANTS, SLOT_INNER, SLOT_HEAD, SLOT_HAIR, SLOT_FOOT = range(9)
 
 INV_NONE, INV_SKILL, INV_GENERAL = range(3)
+INVENTORY_SLOTS = 100
 
-# Placeholder stats until the 10 fields are identified (values seen on a live character).
-DEFAULT_STATS = (2713, 2152, 6679, 600, 6118, 2100, 600, 2100, 600, 600)
+# StatInfo = the client's UnitStatData row: UnitBaseStat {Strength, Agility, Inteligence, Spirit, Stamina}, Mass,
+# GravityScale, MaxJumpHeight, MaxWalkSpeed, GroundFriction (field names and order from DataTable/CommonUnit/
+# UnitStatTable; the last five match the unit constructor's defaults at 0x422ae0). Values = that table's row 0.
+DEFAULT_STATS = (5.0, 5.0, 5.0, 5.0, 5.0, 100.0, 4.0, 300.0, 740.0, 0.02)
 
 
 def stats(w: Writer, values=DEFAULT_STATS) -> Writer:
-    """Optional 0x34a200 ("StatInfo"): 10 x u32."""
+    """Optional 0x34a200 ("StatInfo"): 10 x **float32** (the setter at 0x485b2a loads them with movss and passes
+    5 + 5 to 0x47fa40 / 0x43bfc0). Sent as ints they decode as ~0: no movement, empty stamina, one-shot deaths."""
     w.u8(1)
-    for v in values: w.u32(v)
+    for v in values: w.raw(struct.pack('<f', float(v)))
     return w
 
 
@@ -81,12 +105,11 @@ def inventory(w: Writer, items) -> Writer:
     for it in items:
         w.u64(it['uid']).u8(1)
         item(w, it)
-    # TSet<{u8, u32, u32}> (0x2e4110). Guess: equipped look per slot = (EEquipSlot, item id, dye/0). With the two
-    # weapons only, the weapon showed but the body stayed a placeholder mesh in the world (fine in the inventory menu).
-    worn = [it for it in items if it.get('slot')]
-    w.u32(len(worn))
-    for it in worn:
-        w.u8(it['slot']).u32(it['id']).u32(0)
+    # TMap<u8 EInventoryType, {u32 used, u32 capacity}> (0x2e4110). Filled with (slot, item id, 0) the mission map
+    # said "skill inventory is full (210,040 / 0)": entry 1 = skill inventory, 210040 used of 0.
+    w.u32(2)
+    for inv in (INV_SKILL, INV_GENERAL):
+        w.u8(inv).u32(sum(1 for it in items if it.get('inv', INV_GENERAL) == inv)).u32(INVENTORY_SLOTS)
     return w
 
 
@@ -94,20 +117,22 @@ def inventory(w: Writer, items) -> Writer:
 # (30000 top, 40000 pants, 140070 foot; slots inferred from icon names) and 160000-160090 (skills, ids not in
 # WeaponDetailTable); DefaultUnderwearList = 20000; the two weapons 210040 (WT_GreateSword) and 220040 (WT_Bow) are in
 # WeaponDetailTable. Equipping the skills is left for later.
-DEFAULT_GEAR = [(210040, SLOT_WEAPON), (220040, SLOT_WEAPON_SUB), (30000, SLOT_TOP), (40000, SLOT_PANTS),
+DEFAULT_GEAR = [(210040, SLOT_WEAPON, INV_SKILL), (220040, SLOT_WEAPON_SUB, INV_SKILL), (30000, SLOT_TOP), (40000, SLOT_PANTS),
                 (20000, SLOT_INNER), (140070, SLOT_FOOT),
-                (160000, SLOT_NONE), (160010, SLOT_NONE), (160020, SLOT_NONE), (160030, SLOT_NONE),
-                (160040, SLOT_NONE), (160090, SLOT_NONE)]
+                (160000, SLOT_NONE), (160010, SLOT_NONE), (160020, SLOT_NONE),
+                (160030, SLOT_NONE), (160040, SLOT_NONE), (160090, SLOT_NONE)]
+# In 2019 the karma items (weapon + skills, 210040 / 220040, DefaultItemTable "SkillItemList") live in the *skill*
+# inventory: with them in the general inventory the mission map says "skill inventory is full (210,040 / 0)".
 
 
 def default_items(char_uid: int):
-    return [{'uid': char_uid * 1000 + i + 1, 'id': iid, 'slot': slot} for i, (iid, slot) in enumerate(DEFAULT_GEAR)]
+    return [{'uid': char_uid * 1000 + i + 1, 'id': g[0], 'slot': g[1], 'inv': g[2] if len(g) > 2 else INV_GENERAL}
+            for i, g in enumerate(DEFAULT_GEAR)]
 
 
 def unit_property(w: Writer, items) -> Writer:
     """Optional 0x30b690 ("UnitPropertyInfo"): two TMap<u8, u32> (0x2e4360). The first is read by the weapon getter
-    0x46a9b0 (key = current weapon-set index, value = weapon item id); the host logs
-    "InitializeWeaponSetTypeInfo GetUnitPropertyInfo Failed" without it. The second is probably passive skills."""
+    0x46a9b0 (key = current weapon-set index, value = weapon item id). The second is unknown (passive skills?)."""
     weapons = [it['id'] for it in items if it.get('slot') in (SLOT_WEAPON, SLOT_WEAPON_SUB)]
     w.u8(1).u32(len(weapons))
     for i, iid in enumerate(weapons):
@@ -152,14 +177,15 @@ def use_character_ack(account_uid: int, ch) -> bytes:
     # 0x34a0a0
     w.u64(account_uid).u64(ch['uid']).fstr(ch['name'])
     unit_property(w, ch.get('items', []))  # optional 0x30b690
-    w.none()                          # optional 0x2e2970
+    w.none()                          # optional 0x2e2970 (wraps another optional chaser-rank struct; sending one
+                                      # level of it broke parsing: "FAILED [H] GS_CL_USE_CHARACTER_ACK")
     stats(w)                          # optional 0x34a200
     _opt(w, ch.get('look'))           # optional 0x349a00
     inventory(w, ch.get('items', []))  # optional 0x30b600
     # rest of 0x3a6f50
     w.empty(2)                        # TMap 0x2e10e0, TMap 0x2e0f20
     w.empty(3)                        # TSet<u32> 0x2e0a30 x3
-    w.u8(0).u32(0)
+    w.u8(1).u32(100)                  # unknown (capacity? see verify_account_ack)
     w.empty(3)                        # TMap 0x352130, TSet<u8> 0x2e4050, TMap 0x351b90
     w.empty(1)                        # TSet<u32> 0x2e0a30
     return w.bytes()
@@ -178,3 +204,132 @@ def joinable_square_not(square_id: int, auth_key: int, ip: str, port: int) -> by
 
 def result_only(result=OK) -> bytes:
     return Writer().i32(result).bytes()
+
+
+def custom_mission_list_ack() -> bytes:
+    """Handler 0x38ae05: i32 result, TArray<room 0x3a6ac0>, FString, i32, TMap<u8, u32>. Empty list."""
+    return Writer().i32(OK).empty().fstr('').i32(0).empty().bytes()
+
+
+def complete_guide_ack(guides) -> bytes:
+    """Handler 0x32ade0: i32 result, TSet<u8> completed guides."""
+    w = Writer().i32(OK).u32(len(guides))
+    for g in guides: w.u8(g)
+    return w.bytes()
+
+
+# 2019 story ("Epic") missions: id -> map. Ids are the map-name suffixes (Abandoned_Ruins_Epic_1000 ...).
+EPIC_MISSIONS = {
+    1000: 'KillMonster/Abandoned_Ruins/Abandoned_Ruins_Epic_1000', 1010: 'KillMonster/Abandoned_Ruins/Abandoned_Ruins_Epic_1010',
+    1020: 'KillMonster/Abandoned_Ruins/Abandoned_Ruins_Epic_1020', 1030: 'KillMonster/Abandoned_Ruins/Abandoned_Ruins_Epic_1030',
+    2000: 'KillMonster/Delasa/Delasa_Epic_2000', 2010: 'KillMonster/Delasa/Delasa_Epic_2010',
+    2020: 'KillMonster/Delasa/Delasa_Epic_2020', 2030: 'KillMonster/Delasa/Delasa_Epic_2030',
+    3000: 'KillMonster/Caverns_of_Beast/Caverns_of_Beast_Epic_3000', 3010: 'KillMonster/Caverns_of_Beast/Caverns_of_Beast_Epic_3010',
+    3020: 'KillMonster/Caverns_of_Beast/Caverns_of_Beast_Epic_3020', 3030: 'KillMonster/Caverns_of_Beast/Caverns_of_Beast_Epic_3030',
+    4000: 'KillMonster/Secret_Gate/Twisted_Ruins_Epic_4000', 4010: 'KillMonster/Secret_Gate/Twisted_Ruins_Epic_4010',
+    4020: 'KillMonster/Secret_Gate/Secret_Gate_Epic_4020', 4030: 'KillMonster/Secret_Gate/Secret_Gate_Epic_4030',
+    5000: 'KillMonster/Regenier_Monastery/Regenier_Epic_5000', 5010: 'KillMonster/Regenier_Monastery/Regenier_Epic_5010',
+    5020: 'KillMonster/Regenier_Monastery/Regenier_Epic_5020',
+    6000: 'KillMonster/Karciel/Karciel_Epic_6000', 6010: 'KillMonster/Karciel/Karciel_Epic_6010',
+    6020: 'KillMonster/Karciel/Karciel_Epic_6020',
+}
+
+
+def mission_map(mid: int) -> str | None:
+    m = EPIC_MISSIONS.get(mid)
+    return f'/Game/TheChase/Map/Room/{m}' if m else None
+
+
+def display_mission_list_not(mission_ids) -> bytes:
+    """0x2e0440: u32, TMap<u32 mission id, u32> (0x2e2300), TSet<u32> (0x2e0a30). Live sends value 0 for every id."""
+    w = Writer().u32(0).u32(len(mission_ids))
+    for m in mission_ids: w.u32(m).u32(0)
+    return w.empty().bytes()
+
+
+def request_match_ack(result=OK, value=0) -> bytes:
+    """Handler window 0x3274ac: i32 result, u32, FString, u32."""
+    return Writer().i32(result).u32(value).fstr('').u32(0).bytes()
+
+
+def joinable_room_not(room_id: int, auth_key: int, ip: str, port: int) -> bytes:
+    """0x34b1d0: u64 room id, FString public ip, FString private ip, u16 port, u8, u32 x4, u64 auth key?, FString."""
+    return (Writer().u64(room_id).fstr(ip).fstr(ip).u16(port).u8(0)
+            .u32(0).u32(0).u32(0).u32(0).u64(auth_key).fstr('').bytes())
+
+
+def chaser_rank_info_not(name: str) -> bytes:
+    """Handler window 0x328597: optional<0x349830: u32 x4, FString name, u32 x6, u8, u64, u32, u32, u8, u32>.
+    Without it the client logs "Fail TCGameUserManager::GetUnitChaserRankInfo" over and over. Values copied from the
+    shape of the live packet (4, 4, 1001, 1001, name, zeros); meanings unknown."""
+    w = Writer().u8(1).u32(4).u32(4).u32(1001).u32(1001).fstr(name)
+    for _ in range(6): w.u32(0)
+    return w.u8(0).u64(0).u32(0).u32(0).u8(0).u32(0).bytes()
+
+
+def end_game_not(mission_id: int, won: bool, char_uid: int = 0, name: str = '', account_uid: int = 0) -> bytes:
+    """Handler window 0x38a1c0 -> TCStateRoom 0x37f7b0. The handler looks the local player (u64 at controller+0x318,
+    the character uid: DS_RS_END_GAME_NOT carries it too) up in the per-player result map at +0x90 and skips the
+    result screen if it isn't there. Layout from the deserializers; scalars mostly unknown:
+    {u32, u32, u8, u8, {u32, TMap<u32,{u32,u32}>, 12 x u32}},
+    TMap<u64 uid, {0x3a7380 result, 0x3a7750, TArray<{u8,u8,u32}>, u8}> (0x352630), TSet<u64> (0x2e4820),
+    {u32, FString}, u32, u8, u8, {u64, u64}, u8, u32, u32."""
+    w = Writer().u32(mission_id).u32(0).u8(1 if won else 0).u8(0)
+    w.u32(0).empty()
+    for _ in range(12): w.u32(0)
+    # per-player results. The lookup key (controller+0x318) isn't confirmed: send the same entry under the character
+    # uid, the account uid and 0.
+    keys = list(dict.fromkeys([char_uid, account_uid, 0]))
+    w.u32(len(keys))
+    for key in keys:
+        w.u64(key)
+        w.u64(char_uid).fstr(name).u64(account_uid).u64(0).u32(0).u32(0)  # 0x3a7380 head
+        w.empty(2)                                                         # two TMap<u8,u32>
+        for _ in range(7): w.u32(0)
+        w.u8(1 if won else 0)
+        for _ in range(5 + 6): w.u32(0)
+        w.u8(0)
+        for _ in range(4): w.u32(0)
+        w.raw(bytes(9))                                                    # 0x3a7940: 9 x u8
+        for _ in range(14): w.u32(0)                                       # 2 x 0x3a72b0: 7 x u32
+        w.u8(0).fstr(name).u64(char_uid).u32(0).u32(0)                    # 0x3a7750
+        w.empty()                                                          # TArray<{u8,u8,u32}>
+        w.u8(0)
+    w.empty()                                                          # TSet<u64>
+    w.u32(0).fstr('')
+    w.u32(0).u8(0).u8(0).u64(0).u64(0).u8(0).u32(0).u32(0)
+    return w.bytes()
+
+
+def game_reward_not() -> bytes:
+    """Deserializer 0x34b070: 3 x TMap<u8,u32>, TMap<u32,{u32,u32}>, TMap 0x2e3170 (items), TSet<u32>, u32.
+    Empty reward for now."""
+    return Writer().empty(6).u32(0).bytes()
+
+
+def update_requested_match_not(mission_id: int) -> bytes:
+    """Handler window 0x32777d: u32, u64, u32, FString, TMap 0x2e5870. Meanings guessed (mission id first)."""
+    return Writer().u32(mission_id).u64(0).u32(0).fstr('').empty().bytes()
+
+
+def completed_match_not(mission_id: int, region: str = 'local', match_id: int = 1) -> bytes:
+    """Handler window 0x327a53 (before its log at 0x327b02): u32, FString, u32, u64, u32.
+    Guess: mission id, region, ?, match id, accept timeout (s)."""
+    return Writer().u32(mission_id).fstr(region).u32(0).u64(match_id).u32(30).bytes()
+
+
+def progress_info_of_completed_match_not(mission_id: int, char_uid: int) -> bytes:
+    """Handler window 0x327ba9: u32, u32, TMap<u64,u32> (0x2e4980) x2, container 0x2e6050 (u32 count + ...).
+    Guess: mission id, ?, accepted {uid: 1}, declined {}, ..."""
+    return Writer().u32(mission_id).u32(0).u32(1).u64(char_uid).u32(1).empty(2).bytes()
+
+
+def ping_test_address_list_not(regions) -> bytes:
+    """Deserializer 0x2e3ca0: TMap<FString region, TArray<FString address>>. The client pings each region
+    (CL_GS_UPDATE_PING_BY_REGION_NOT) and RequestMatch (0x312280) sends one CL_GS_REQUEST_MATCH_REQ per known
+    region: with no regions the Request Mission button silently does nothing."""
+    w = Writer().u32(len(regions))
+    for name, addrs in regions.items():
+        w.fstr(name).u32(len(addrs))
+        for a in addrs: w.fstr(a)
+    return w.bytes()

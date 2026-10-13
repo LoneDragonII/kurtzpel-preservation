@@ -37,9 +37,9 @@ what to record, how to name it, how to strip personal data, and how to submit it
 | Pak files | Pak format v4, encrypted index; listing works for the Dec 2019 build |
 | Networking | Bootstrap is an HTTP(S) "app info" service (GetOption, Login) that hands the client a game-server address. Lobby traffic is a custom KOG TCP protocol: framing, cipher and the 2019 opcode table (370 ids) are mapped, see [notes/emulator-2019.md](notes/emulator-2019.md) |
 | In-match | Missions appear to run on UE dedicated servers behind a relay. Whether boss logic is client- or server-authoritative is still open |
-| Story mode | The 2019 client contains `Epic_<id>` story missions across six areas, with cinematics and NPC dialogue tables. Diff against the Jan 2020 build pending |
+| Story mode | 22 `Epic_<id>` story missions (1000-6020) across six areas. **Playable again** through the emulator (requested from the Mission Map, run locally by the client); results/progress not saved yet |
 | Live captures | **Not started — this is where we need help most** |
-| Server emulator | **Working prototype for the 2019 story client**: login → character creation → tutorial → walking around Eltheca, with no official servers. See [server/](server/README.md) |
+| Server emulator | **Working prototype for the 2019 story client**: login → character creation → Eltheca → Mission Map → story (Epic) missions playable to the boss kill, with no official servers. See [server/](server/README.md) |
 
 ## Roadmap
 

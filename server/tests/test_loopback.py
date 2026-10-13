@@ -26,7 +26,8 @@ async def flow(port, key):
                 if o != P.HEART_BEAT: got.append((o, p))
         return got
 
-    v = await call(P.CL_GS_VERIFY_ACCOUNT_REQ, Writer().fstr('tok').fstr('76561190000000001').u32(1).bytes(), 1)
+    v = await call(P.CL_GS_VERIFY_ACCOUNT_REQ, Writer().fstr('tok').fstr('76561190000000001').u32(1).bytes(), 2)
+    v = [x for x in v if x[0] == P.GS_CL_VERIFY_ACCOUNT_ACK]
     assert v[0][0] == P.GS_CL_VERIFY_ACCOUNT_ACK and Reader(v[0][1]).i32() == 0
     lst = await call(P.CL_GS_CHARACTER_LIST_REQ, b'', 1)
     rd = Reader(lst[0][1]); assert rd.i32() == 0 and rd.u32() == 0
@@ -34,11 +35,11 @@ async def flow(port, key):
     rd = Reader(c[0][1]); assert rd.i32() == 0; uid = rd.u64(); assert rd.fstr() == 'Tester'
     lst = await call(P.CL_GS_CHARACTER_LIST_REQ, b'', 1)
     rd = Reader(lst[0][1]); assert rd.i32() == 0 and rd.u32() == 1 and rd.u64() == uid
-    u = await call(P.CL_GS_USE_CHARACTER_REQ, Writer().u64(uid).bytes(), 1)
-    assert u[0][0] == P.GS_CL_USE_CHARACTER_ACK and Reader(u[0][1]).i32() == 0
-    sq = await call(P.CL_GS_ENTER_SQUARE_REQ, b'', 2)
-    assert [o for o, _ in sq] == [P.GS_CL_ENTER_SQUARE_ACK, P.GS_CL_JOINABLE_SQUARE_NOT]
-    rd = Reader(sq[1][1]); rd.u64(); rd.u64(); assert rd.fstr() == '127.0.0.1'; rd.fstr(); assert rd.u16() == 7777
+    u = await call(P.CL_GS_USE_CHARACTER_REQ, Writer().u64(uid).bytes(), 2)
+    u = dict(u); assert Reader(u[P.GS_CL_USE_CHARACTER_ACK]).i32() == 0
+    sq = await call(P.CL_GS_ENTER_SQUARE_REQ, b'', 3)
+    assert [o for o, _ in sq] == [P.GS_CL_ENTER_SQUARE_ACK, P.GS_CL_DISPLAY_MISSION_LIST_NOT, P.GS_CL_JOINABLE_SQUARE_NOT]
+    rd = Reader(sq[2][1]); rd.u64(); rd.u64(); assert rd.fstr() == '127.0.0.1'; rd.fstr(); assert rd.u16() == 7777
     w.close()
 
 

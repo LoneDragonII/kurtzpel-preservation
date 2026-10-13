@@ -23,6 +23,10 @@ def main():
     ap.add_argument('--db', default='kzemu.sqlite')
     ap.add_argument('--names', help='optional opcode-name table (JSON {"0x0001": "CL_GS_..."}) for nicer logs')
     ap.add_argument('--trace', default='logs/trace.jsonl', help='JSONL log of every decoded packet ("" to disable)')
+    ap.add_argument('--travel-file', help='file read by tools/frida/local_travel.js: the map to open locally instead of '
+                    'connecting to a match server (missions are then played single-player)')
+    ap.add_argument('--start-mission', type=int, help='with --travel-file: entering the square opens this story mission '
+                    'locally instead (e.g. 1000 = Abandoned Ruins Epic 1000)')
     ap.add_argument('-v', '--verbose', action='store_true')
     a = ap.parse_args()
 
@@ -35,7 +39,8 @@ def main():
     names = json.loads(pathlib.Path(a.names).read_text(encoding='utf-8')) if a.names else None
 
     appinfo.start(a.bind, a.http_port, a.public_host, a.gs_port)
-    gs = GameServer(DB(a.db), key, {'id': 1, 'host': sq_host, 'port': int(sq_port)}, names, a.trace or None)
+    gs = GameServer(DB(a.db), key, {'id': 1, 'host': sq_host, 'port': int(sq_port)}, names, a.trace or None, a.travel_file)
+    gs.start_mission = a.start_mission
     try:
         asyncio.run(gs.serve(a.bind, a.gs_port))
     except KeyboardInterrupt:
