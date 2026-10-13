@@ -24,6 +24,7 @@ GS_CL_END_GAME_NOT, GS_CL_GAME_REWARD_NOT = 0x001c, 0x001f
 # The 2019 client hosting a mission locally still talks to its "relay" (RS) through the GS connection:
 GAME_MODE_USER_JOIN_PROGRESS_INFO_NOT, JOINED_GAME_MODE_USER_NOT = 0x016c, 0x016d
 DS_RS_END_GAME_NOT, DS_RS_UPDATE_GAME_PLAY_LOG_NOT = 0x00dc, 0x00de
+UPDATE_CHARACTER_INFO_IN_GAME_ONLY_NOT = 0x016a
 CL_GS_REQUEST_MATCH_REQ, GS_CL_REQUEST_MATCH_ACK = 0x0021, 0x0022
 CL_GS_CREATE_ROOM_REQ, GS_CL_CREATE_ROOM_ACK = 0x0014, 0x0015
 GS_CL_JOINABLE_ROOM_NOT = 0x0018
@@ -68,8 +69,11 @@ def verify_account_ack(account_uid: int, steam_id: str) -> bytes:
     return w.bytes()
 
 
-# EEquipSlot (reflected enum order in the 2019 exe)
-SLOT_NONE, SLOT_WEAPON, SLOT_WEAPON_SUB, SLOT_TOP, SLOT_PANTS, SLOT_INNER, SLOT_HEAD, SLOT_HAIR, SLOT_FOOT = range(9)
+# EEquipSlot values (from the reflected enum table in the 2019 exe: FEnumeratorParam {name, int64 value}).
+SLOT_NONE, SLOT_WEAPON, SLOT_WEAPON_SUB = 0, 1, 2
+SLOT_TOP, SLOT_PANTS, SLOT_INNER, SLOT_HEAD, SLOT_HAIR = 10, 11, 12, 13, 14
+SLOT_FOOT, SLOT_BACK, SLOT_WAIST, SLOT_HEADGEAR = 50, 51, 52, 53
+SLOT_SKILL1, SLOT_SKILL2, SLOT_SKILL3, SLOT_RAGE = 101, 102, 103, 104
 
 INV_NONE, INV_SKILL, INV_GENERAL = range(3)
 INVENTORY_SLOTS = 100
@@ -93,9 +97,17 @@ def item(w: Writer, it) -> Writer:
     u8 +0x15 = EInventoryType (1 skill, 2 general; client logs "Fail FindItemInfo eInventoryType : 2"),
     u8 +0x16 = EEquipSlot the item is equipped in (0 = not equipped): with every equipped item at 1, the client took the
     last one (140070) as its weapon. The u32s are guessed as count and durability."""
-    w.u64(it['uid']).u32(it['id']).u32(it.get('count', 1)).u32(it.get('durability', 100))
+    # second u32: durability? (100); for skill items guessed as the weapon-set (karma) index. With 1 on the bow item
+    # the bow rendered pitch black, so weapons keep 100.
+    b = it['set'] if ('set' in it and it.get('slot', 0) >= SLOT_SKILL1) else it.get('durability', 100)
+    w.u64(it['uid']).u32(it['id']).u32(it.get('count', 1)).u32(b)
     w.u8(it.get('inv', INV_GENERAL)).u8(it.get('slot', SLOT_NONE))
-    w.u64(0).u64(0).u32(0).u32(0).u32(0).empty()
+    # u64 x2: live items carry an acquire time here (unix seconds); 0 may read as expired / not owned
+    w.u64(it.get('acquired', now())).u64(0).u32(0).u32(0).u32(0)
+    # trailing TSet<u32> (0x2e2090): guess = the skills socketed into a karma (weapon) item
+    sk = it.get('skills', [])
+    w.u32(len(sk))
+    for x in sk: w.u32(x)
     return w
 
 
@@ -113,30 +125,46 @@ def inventory(w: Writer, items) -> Writer:
     return w
 
 
-# Starting gear from the client's DefaultItemTable (same for HumanMan and HumanWoman): BasicItemList holds the outfit
-# (30000 top, 40000 pants, 140070 foot; slots inferred from icon names) and 160000-160090 (skills, ids not in
-# WeaponDetailTable); DefaultUnderwearList = 20000; the two weapons 210040 (WT_GreateSword) and 220040 (WT_Bow) are in
-# WeaponDetailTable. Equipping the skills is left for later.
-DEFAULT_GEAR = [(210040, SLOT_WEAPON, INV_SKILL), (220040, SLOT_WEAPON_SUB, INV_SKILL), (30000, SLOT_TOP), (40000, SLOT_PANTS),
-                (20000, SLOT_INNER), (140070, SLOT_FOOT),
-                (160000, SLOT_NONE), (160010, SLOT_NONE), (160020, SLOT_NONE),
-                (160030, SLOT_NONE), (160040, SLOT_NONE), (160090, SLOT_NONE)]
-# In 2019 the karma items (weapon + skills, 210040 / 220040, DefaultItemTable "SkillItemList") live in the *skill*
-# inventory: with them in the general inventory the mission map says "skill inventory is full (210,040 / 0)".
+# Starting gear (client DefaultItemTable + ItemTable + SkillDataTable): outfit 30000/40000/20000 + boots 140070,
+# emotes 160000-160090 (IT_Emotion -> slots 160-164), karmas 210040 (WT_GreateSword) / 220040 (WT_Bow) in the skill
+# inventory, and the unsellable starter skills of those two karmas (SkillDataTable: 1100/1110/1120 normal + 1170 rage
+# for the greatsword, 1220/1240/1250 + 1270 for the bow). (id, slot, inventory, weapon-set index)
+SLOT_EMOTE = 160
+DEFAULT_GEAR = [(210040, SLOT_WEAPON, INV_SKILL, 0), (220040, SLOT_WEAPON_SUB, INV_SKILL, 1),
+                (30000, SLOT_TOP), (40000, SLOT_PANTS), (20000, SLOT_INNER), (140070, SLOT_FOOT),
+                (160000, SLOT_EMOTE), (160010, SLOT_EMOTE + 1), (160020, SLOT_EMOTE + 2), (160030, SLOT_EMOTE + 3),
+                (160040, SLOT_EMOTE + 4), (160090, SLOT_NONE),
+                (1100, SLOT_SKILL1, INV_SKILL, 0), (1110, SLOT_SKILL2, INV_SKILL, 0), (1120, SLOT_SKILL3, INV_SKILL, 0),
+                (1170, SLOT_RAGE, INV_SKILL, 0),
+                (1220, SLOT_SKILL1, INV_SKILL, 1), (1240, SLOT_SKILL2, INV_SKILL, 1), (1250, SLOT_SKILL3, INV_SKILL, 1),
+                (1270, SLOT_RAGE, INV_SKILL, 1)]
 
 
 def default_items(char_uid: int):
-    return [{'uid': char_uid * 1000 + i + 1, 'id': g[0], 'slot': g[1], 'inv': g[2] if len(g) > 2 else INV_GENERAL}
-            for i, g in enumerate(DEFAULT_GEAR)]
+    out = []
+    karma_skills = {0: [1100, 1110, 1120, 1170], 1: [1220, 1240, 1250, 1270]}
+    for i, g in enumerate(DEFAULT_GEAR):
+        it = {'uid': char_uid * 1000 + i + 1, 'id': g[0], 'slot': g[1], 'inv': g[2] if len(g) > 2 else INV_GENERAL}
+        if len(g) > 3: it['set'] = g[3]
+        if g[1] in (SLOT_WEAPON, SLOT_WEAPON_SUB): it['skills'] = karma_skills[g[3]]
+        out.append(it)
+    return out
+
+
+WT_GREATSWORD, WT_WAND, WT_BOW = 1, 2, 3   # EWeaponType
+WEAPON_TYPE = {210040: WT_GREATSWORD, 220040: WT_BOW}
 
 
 def unit_property(w: Writer, items) -> Writer:
-    """Optional 0x30b690 ("UnitPropertyInfo"): two TMap<u8, u32> (0x2e4360). The first is read by the weapon getter
-    0x46a9b0 (key = current weapon-set index, value = weapon item id). The second is unknown (passive skills?)."""
-    weapons = [it['id'] for it in items if it.get('slot') in (SLOT_WEAPON, SLOT_WEAPON_SUB)]
-    w.u8(1).u32(len(weapons))
-    for i, iid in enumerate(weapons):
-        w.u8(i).u32(iid)
+    """Optional 0x30b690 ("UnitPropertyInfo"): two TMap<u8, u32> (0x2e4360). Map 1 is read as "WeaponSetTypeInfo"
+    (host log: "InitializeWeaponSetTypeInfo GetUnitPropertyInfo Failed"): weapon-set index -> EWeaponType. Skills are
+    tied to a weapon type (SkillDataTable WeaponSetType), so with item ids here the skills showed but never fired.
+    Map 2 is probably passive skills ("InitializePassiveSkills")."""
+    sets = sorted((it['set'], WEAPON_TYPE.get(it['id'], 0)) for it in items
+                  if it.get('slot') in (SLOT_WEAPON, SLOT_WEAPON_SUB) and 'set' in it)
+    w.u8(1).u32(len(sets))
+    for idx, wt in sets:
+        w.u8(idx).u32(wt)
     return w.empty()
 
 
@@ -171,17 +199,21 @@ def create_character_ack(ch, result=OK) -> bytes:
     return char_info(w, ch).bytes() if ch else w.bytes()
 
 
-def use_character_ack(account_uid: int, ch) -> bytes:
-    """Deserializer 0x3a6f50: i32 result + FCharacterFullInfo (0x34a0a0) + inventory/progress containers."""
-    w = Writer().i32(OK)
-    # 0x34a0a0
+def full_info(w: Writer, account_uid: int, ch) -> Writer:
+    """FCharacterFullInfo, deserializer 0x34a0a0."""
     w.u64(account_uid).u64(ch['uid']).fstr(ch['name'])
     unit_property(w, ch.get('items', []))  # optional 0x30b690
-    w.none()                          # optional 0x2e2970 (wraps another optional chaser-rank struct; sending one
-                                      # level of it broke parsing: "FAILED [H] GS_CL_USE_CHARACTER_ACK")
+    w.none()                          # optional 0x2e2970 (wraps another optional chaser-rank struct)
     stats(w)                          # optional 0x34a200
     _opt(w, ch.get('look'))           # optional 0x349a00
     inventory(w, ch.get('items', []))  # optional 0x30b600
+    return w
+
+
+def use_character_ack(account_uid: int, ch) -> bytes:
+    """Deserializer 0x3a6f50: i32 result + FCharacterFullInfo (0x34a0a0) + inventory/progress containers."""
+    w = Writer().i32(OK)
+    full_info(w, account_uid, ch)
     # rest of 0x3a6f50
     w.empty(2)                        # TMap 0x2e10e0, TMap 0x2e0f20
     w.empty(3)                        # TSet<u32> 0x2e0a30 x3
@@ -333,3 +365,21 @@ def ping_test_address_list_not(regions) -> bytes:
         w.fstr(name).u32(len(addrs))
         for a in addrs: w.fstr(a)
     return w.bytes()
+
+
+def equip_item_ack(set_index: int, changed_items, op: int = 1, result=OK) -> bytes:
+    """Handler at 0x327356: i32 result, u32, TArray<{u32 op?, u16, u16, optional item, u32}> (0x2e3170).
+    The element fields besides the item are guesses (operation, inventory type, slot)."""
+    w = Writer().i32(result).u32(set_index).u32(len(changed_items))
+    for it in changed_items:
+        w.u32(op).u16(it.get('inv', INV_GENERAL)).u16(it.get('slot', SLOT_NONE)).u8(1)
+        item(w, it)
+        w.u32(0)
+    return w.bytes()
+
+
+def update_character_info_in_game_not(account_uid: int, ch) -> bytes:
+    """Handler 0x32c5c7 (relay -> host): u32, TMap<u32, FCharacterFullInfo> (0x2e2720). Sent after an equip so the
+    locally hosted square/mission refreshes the character. Key guessed as the character uid (low 32 bits)."""
+    w = Writer().u32(0).u32(1).u32(ch['uid'] & 0xffffffff)
+    return full_info(w, account_uid, ch).bytes()

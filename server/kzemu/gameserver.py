@@ -178,6 +178,29 @@ class Session:
         self.send(P.GS_CL_END_GAME_NOT, P.end_game_not(self.srv.current_mission or 0, won, ch['uid'], ch['name'], self.account_uid or 0))
         self.send(P.GS_CL_GAME_REWARD_NOT, P.game_reward_not())
 
+    def on_equip_item(self, p):
+        # CL_GS_EQUIP_ITEM_REQ (template 0x2ed8e0): u32 weapon-set index, u64 item uid, u8, u8 slot (0 = unequip)
+        rd = Reader(p)
+        idx, uid, flag, slot = rd.u32(), rd.u64(), rd.u8(), rd.u8()
+        items = self.char['items'] if self.char else []
+        target = next((it for it in items if it['uid'] == uid), None)
+        log.info('%s  equip uid=%d slot=%d flag=%d (%s)', self.peer, uid, slot, flag, target and target['id'])
+        if not target:
+            self.send(P.GS_CL_EQUIP_ITEM_ACK, P.equip_item_ack(idx, [], result=1)); return
+        changed = []
+        # the client sends the same request for "equip" and "Unequip" (flag 0 both times): toggle
+        if target.get('slot') == slot:
+            slot = P.SLOT_NONE
+        if slot:
+            for it in items:  # whatever was in that slot comes off
+                if it is not target and it.get('slot') == slot and it.get('set') == target.get('set'):
+                    it['slot'] = P.SLOT_NONE; changed.append(it)
+        target['slot'] = slot
+        changed.append(target)
+        self.send(P.GS_CL_EQUIP_ITEM_ACK, P.equip_item_ack(idx, changed))
+        self.srv.db.save_slots(self.char['uid'], {it['uid']: it.get('slot', 0) for it in items})
+        # (UPDATE_CHARACTER_INFO_IN_GAME_ONLY_NOT here froze movement in the square: not sent)
+
     def ignore(self, p):
         pass
 
@@ -196,6 +219,7 @@ HANDLERS = {
     P.CL_GS_CHANGE_GAME_STATE_NOT: Session.ignore,
     P.CL_GS_UPDATE_PING_BY_REGION_NOT: Session.ignore,
     P.CL_GS_QUIT_CLIENT_NOT: Session.ignore,
+    P.CL_GS_EQUIP_ITEM_REQ: Session.on_equip_item,
     P.DS_RS_END_GAME_NOT: Session.on_ds_end_game,
     P.DS_RS_UPDATE_GAME_PLAY_LOG_NOT: Session.ignore,
     P.GAME_MODE_USER_JOIN_PROGRESS_INFO_NOT: Session.ignore,
@@ -227,8 +251,13 @@ class GameServer:
 
     @staticmethod
     def db_char(row):
+        items = P.default_items(row['uid'])
+        if row.get('slots'):
+            over = {int(k): v for k, v in json.loads(row['slots']).items()}
+            for it in items:
+                if it['uid'] in over: it['slot'] = over[it['uid']]
         return {'uid': row['uid'], 'name': row['name'], 'look': row.get('look'), 'created': row.get('created', 0),
-                'items': P.default_items(row['uid'])}
+                'items': items}
 
     def trace(self, s, d, op, payload, **kw):
         if not self.trace_f:

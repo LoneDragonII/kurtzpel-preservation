@@ -42,7 +42,7 @@ To join a square hosted by another client, both copies must run with Steam netwo
 
 ## Known gaps
 - No result screen after the boss (END_GAME is accepted; the client's reward widget class is never loaded).
-- Equipping items (`CL_GS_EQUIP_ITEM_REQ`) has no handler yet, so the client waits forever.
-- Starter skills are not equipped; mission rewards (AP/CP/items) and story progress are not saved.
-- The body renders as a placeholder mesh in the world (only the head shows); fine in the inventory menu.
+- Starter skills are equipped (E/R/F/Q icons show) but don't fire yet.
+- Equipping in Eltheca breaks movement until the next map load (gear is saved, so relog/mission applies it cleanly).
+- Mission rewards (AP/CP/items) and story progress are not saved.
 - Multiplayer square/missions: a listen host has no character data for joiners, so they can't move.

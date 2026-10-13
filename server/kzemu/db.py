@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS character (
     appearance BLOB,           -- raw optional struct bytes as the client sent them
     look BLOB,
     create_req BLOB,           -- the whole CREATE_CHARACTER_REQ payload, kept for later decoding
+    slots TEXT,                -- JSON {item uid: equip slot} overrides set through EQUIP_ITEM_REQ
     created INTEGER NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0
 );
@@ -26,6 +27,9 @@ class DB:
         self.c = sqlite3.connect(path, check_same_thread=False)
         self.c.row_factory = sqlite3.Row
         self.c.executescript(SCHEMA)
+        cols = [r[1] for r in self.c.execute('PRAGMA table_info(character)')]
+        if 'slots' not in cols:
+            self.c.execute('ALTER TABLE character ADD COLUMN slots TEXT')
         # start character uids away from 0 so they never look like "no character"
         if not self.c.execute("SELECT 1 FROM sqlite_sequence WHERE name='character'").fetchone():
             self.c.execute("INSERT INTO sqlite_sequence(name, seq) VALUES ('character', 1000)")
@@ -54,4 +58,9 @@ class DB:
 
     def delete_character(self, account_uid, uid):
         self.c.execute('UPDATE character SET deleted=1 WHERE account_uid=? AND uid=?', (account_uid, uid))
+        self.c.commit()
+
+    def save_slots(self, uid, slots: dict):
+        import json
+        self.c.execute('UPDATE character SET slots=? WHERE uid=?', (json.dumps(slots), uid))
         self.c.commit()

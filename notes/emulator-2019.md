@@ -1,10 +1,10 @@
 # Emulator for the Dec 2019 story client
 
-**Status 2026-10-13 (day 2):** a real 2019 client logs in, creates and selects a character, walks around Eltheca,
-requests a story (Epic) mission from the Mission Map, gets matched, loads the mission map locally with its own
-character and plays it to the boss kill (combat, boss AI, cutscenes). No result screen yet. Helper scripts referenced
-below as `tools/run_offline.py`, `offline_guard.js`, `nosteam.js`, `boot_map.js` are local and not published yet;
-`tools/frida/local_travel.js` is.
+**Status 2026-10-13 (day 2):** a real 2019 client logs in, creates and selects a character (correct starter outfit,
+karmas, emotes), walks around Eltheca, requests a story (Epic) mission from the Mission Map, gets matched, loads the
+mission map locally and plays it to the boss kill. Open: skills don't fire, no result screen, equip in the square needs
+a relog. Helper scripts referenced as `tools/run_offline.py`, `offline_guard.js`, `nosteam.js`, `boot_map.js` are local
+and not published yet; `tools/frida/local_travel.js` is.
 
 Code: `server/` (package `kzemu`, AGPL, no keys/assets).
 Static evidence below is from `KurtzPel_2019-12-27_story/TheChase/Binaries/Win64/TheChase-Win64-Shipping.exe`
@@ -115,3 +115,17 @@ Static evidence below is from `KurtzPel_2019-12-27_story/TheChase/Binaries/Win64
   u64, u32) → client ANSWER_TO_COMPLETED_MATCH_NOT → PROGRESS_INFO_OF_COMPLETED_MATCH_NOT (0x2a) + JOINABLE_ROOM_NOT
   → local_travel.js opens the Epic map. Caverns_of_Beast_Epic_3000 played to the boss kill.
 - Result screen still missing: END_GAME handler needs GameInstance+0x2730 (reward widget class), null so far.
+- 2026-10-13 11:20Z: **body fixed.** EEquipSlot real values (reflected FEnumeratorParam table): None 0, Weapon 1,
+  Weapon_Sub 2, Costume Top 10 / Pants 11 / Iner 12 / Head 13 / Hair 14, Accessory Foot 50 ... LeftHand 60,
+  NomalSkill1-3 101-103, RageSkill 104, Assist 150-153, Emotion 160-164. With the outfit in slots 3/4/5/8 nothing was
+  worn and the in-world body showed the shimmering materialize effect. ECostumeType: Top 0, Pants 1, Iner 2, Head 3,
+  Hair 4, OnePiece 100.
+- EQUIP_ITEM_ACK (0x1e, handler 0x327356): i32 result, u32, TArray<{u32, u16, u16, optional item, u32}> (0x2e3170).
+- 2026-10-13 12:00Z: starter gear from client tables: ItemTable says 160000-160090 are IT_Emotion (slots 160-164);
+  starter skills (unsellable, SkillDataTable WeaponSetType): GS 1100/1110/1120 + rage 1170, Bow 1220/1240/1250 + 1270.
+  Skills show on E/R/F/Q but do not fire yet (open). Unit-property map 1 = weapon-set index -> EWeaponType (1 GS, 3 Bow).
+- Item second u32 behaves like durability: with 1 on the bow the bow rendered black.
+- EQUIP_ITEM_REQ: u32 set, u64 uid, u8 (always 0 seen), u8 slot; equip and "Unequip" send the same request -> server
+  toggles. Applying the ACK in the locally hosted square breaks movement until the next map load (client handler
+  0x316970 has several branches; [ack+4] nonzero triggers 0x47e040/0x3c1f50). UPDATE_CHARACTER_INFO_IN_GAME_ONLY_NOT
+  (0x16a: u32, TMap<u32, FCharacterFullInfo>) refreshes the look but also froze movement; not sent.
